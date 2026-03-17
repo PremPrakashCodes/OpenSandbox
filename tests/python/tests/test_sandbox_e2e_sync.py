@@ -794,6 +794,41 @@ class TestSandboxE2ESync:
         assert "log-line-2" in logs_text
 
     @pytest.mark.timeout(120)
+    @pytest.mark.order(3)
+    def test_02b_run_command_with_envs(self) -> None:
+        """Test run_command env injection via RunCommandOpts.envs (sync)."""
+        TestSandboxE2ESync._ensure_sandbox_created()
+        sandbox = TestSandboxE2ESync.sandbox
+        assert sandbox is not None
+
+        env_key = "OPEN_SANDBOX_E2E_CMD_ENV"
+        env_value = f"env-ok-{int(time.time())}"
+        probe_command = (
+            f"sh -c 'if [ -z \"${{{env_key}:-}}\" ]; then echo \"__EMPTY__\"; "
+            f"else echo \"${{{env_key}}}\"; fi'"
+        )
+
+        # Baseline: variable should be empty when not injected.
+        baseline = sandbox.commands.run(probe_command)
+        assert baseline.error is None
+        baseline_output = "\n".join(msg.text for msg in baseline.logs.stdout).strip()
+        assert baseline_output == "__EMPTY__"
+
+        # Inject environment variables for this command only.
+        injected = sandbox.commands.run(
+            probe_command,
+            opts=RunCommandOpts(
+                envs={
+                    env_key: env_value,
+                    "OPEN_SANDBOX_E2E_SECOND_ENV": "second-ok",
+                }
+            ),
+        )
+        assert injected.error is None
+        injected_output = "\n".join(msg.text for msg in injected.logs.stdout).strip()
+        assert injected_output == env_value
+
+    @pytest.mark.timeout(120)
     @pytest.mark.order(4)
     def test_03_basic_filesystem_operations(self) -> None:
         """Test basic filesystem operations."""
