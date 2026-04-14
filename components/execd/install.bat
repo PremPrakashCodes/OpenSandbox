@@ -43,6 +43,7 @@ if not exist "%EXECD_OEM_BIN%" (
 )
 
 call :prepare_executable "%EXECD_OEM_BIN%"
+call :ensure_firewall_rule
 
 call :log "starting %EXECD_OEM_BIN%"
 set "EXECD_BIN_PS=%EXECD_OEM_BIN%"
@@ -75,4 +76,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:TARGET_BIN_PS; t
 if errorlevel 1 (
     call :log "WARN: executable prepare returned non-zero"
 )
+exit /b 0
+
+:ensure_firewall_rule
+set "EXECD_FW_RULE=OpenSandbox execd 44772"
+call :log "ensuring firewall rule for TCP 44772"
+netsh advfirewall firewall delete rule name="%EXECD_FW_RULE%" >nul 2>&1
+netsh advfirewall firewall add rule name="%EXECD_FW_RULE%" dir=in action=allow protocol=TCP localport=44772 >nul 2>&1
+if errorlevel 1 (
+    call :log "WARN: failed to add firewall allow rule for TCP 44772"
+    exit /b 0
+)
+call :log "firewall rule ready for TCP 44772"
 exit /b 0
