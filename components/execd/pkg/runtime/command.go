@@ -108,7 +108,8 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 	log.Info("received command: %v", request.Code)
 	shell := getShell()
 	cmd := exec.CommandContext(ctx, shell, "-c", request.Code)
-	cwd, err := pathutil.ExpandPath(request.Cwd)
+	extraEnv := mergeExtraEnvs(loadExtraEnvFromFile(), request.Envs)
+	cwd, err := pathutil.ExpandPathWithEnv(request.Cwd, extraEnv)
 	if err != nil {
 		return fmt.Errorf("resolve request cwd %s: %w", request.Cwd, err)
 	}
@@ -125,7 +126,6 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	extraEnv := mergeExtraEnvs(loadExtraEnvFromFile(), request.Envs)
 	cmd.Env = mergeEnvs(os.Environ(), extraEnv)
 	cmd.Dir = cwd
 
@@ -243,7 +243,8 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 	log.Info("received command: %v", request.Code)
 	shell := getShell()
 	cmd := exec.CommandContext(ctx, shell, "-c", request.Code)
-	cwd, err := pathutil.ExpandPath(request.Cwd)
+	extraEnv := mergeExtraEnvs(loadExtraEnvFromFile(), request.Envs)
+	cwd, err := pathutil.ExpandPathWithEnv(request.Cwd, extraEnv)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("resolve cwd: %w", err)
@@ -262,7 +263,6 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 
 	cmd.Stdout = pipe
 	cmd.Stderr = pipe
-	extraEnv := mergeExtraEnvs(loadExtraEnvFromFile(), request.Envs)
 	cmd.Env = mergeEnvs(os.Environ(), extraEnv)
 
 	// use DevNull as stdin so interactive programs exit immediately.

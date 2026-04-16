@@ -46,6 +46,24 @@ func TestExpandPath_EnvVarInMiddle(t *testing.T) {
 	require.Equal(t, filepath.Join("prefix", "segment", "suffix"), got)
 }
 
+func TestExpandPathWithEnv_RequestOverrideHasHigherPriority(t *testing.T) {
+	t.Setenv("WORKDIR", "from-process")
+
+	got, err := ExpandPathWithEnv("base/$WORKDIR", map[string]string{
+		"WORKDIR": "from-request",
+	})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("base", "from-request"), got)
+}
+
+func TestExpandPathWithEnv_CanResolveVarOnlyInOverride(t *testing.T) {
+	got, err := ExpandPathWithEnv("$WORKDIR/tmp", map[string]string{
+		"WORKDIR": "/tmp/ws",
+	})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("/tmp/ws", "tmp"), got)
+}
+
 func TestExpandPath_UndefinedEnvVarInMiddleReturnsError(t *testing.T) {
 	got, err := ExpandPath("prefix/$NOT_SET/suffix")
 	require.Error(t, err)

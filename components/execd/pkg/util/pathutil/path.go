@@ -25,7 +25,22 @@ import (
 
 var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 
-func validateEnvVars(path string) error {
+func envMapFromProcessAndOverrides(envOverrides map[string]string) map[string]string {
+	out := make(map[string]string, len(envOverrides)+16)
+	for _, kv := range os.Environ() {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		out[parts[0]] = parts[1]
+	}
+	for k, v := range envOverrides {
+		out[k] = v
+	}
+	return out
+}
+
+func validateEnvVars(path string, env map[string]string) error {
 	matches := envVarPattern.FindAllStringSubmatch(path, -1)
 	if len(matches) == 0 {
 		return nil
@@ -37,7 +52,7 @@ func validateEnvVars(path string) error {
 		if name == "" {
 			name = m[2]
 		}
-		if _, ok := os.LookupEnv(name); !ok {
+		if _, ok := env[name]; !ok {
 			missingSet[name] = struct{}{}
 		}
 	}
@@ -53,17 +68,20 @@ func validateEnvVars(path string) error {
 	return fmt.Errorf("path references undefined environment variables: %s", strings.Join(missing, ","))
 }
 
-// ExpandPath expands environment variables and a leading "~" to user home.
-// It supports "~", "~/" and "~\" prefixes.
-func ExpandPath(path string) (string, error) {
+// ExpandPathWithEnv expands environment variables and a leading "~" to user home.
+// Environment resolution uses process env overlaid by envOverrides.
+func ExpandPathWithEnv(path string, envOverrides map[string]string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	if err := validateEnvVars(path); err != nil {
+	env := envMapFromProcessAndOverrides(envOverrides)
+	if err := validateEnvVars(path, env); err != nil {
 		return "", err
 	}
 
-	expanded := os.ExpandEnv(path)
+	expanded := os.Expand(path, func(key string) string {
+		return env[key]
+	})
 	if expanded == "~" || strings.HasPrefix(expanded, "~/") || strings.HasPrefix(expanded, `~\`) {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -78,8 +96,14 @@ func ExpandPath(path string) (string, error) {
 	return expanded, nil
 }
 
+// ExpandPath expands environment variables and a leading "~" to user home.
+// It supports "~", "~/" and "~\" prefixes.
+func ExpandPath(path string) (string, error) {
+	return ExpandPathWithEnv(path, nil)
+}
+
 func ExpandAbsPath(path string) (string, error) {
-	expanded, err := ExpandPath(path)
+	expanded, err := ExpandPathWithEnv(path, nil)
 	if err != nil {
 		return "", err
 	}
