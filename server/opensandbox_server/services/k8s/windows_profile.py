@@ -26,6 +26,7 @@ from opensandbox_server.services.docker_windows_profile import (
 WINDOWS_OEM_VOLUME_NAME = "opensandbox-win-oem"
 WINDOWS_KVM_VOLUME_NAME = "opensandbox-win-kvm"
 WINDOWS_TUN_VOLUME_NAME = "opensandbox-win-tun"
+WINDOWS_PROFILE_DEFAULT_USER_PORTS = ["44772", "8080", "3389/tcp", "3389/udp", "8006/tcp"]
 
 
 def is_windows_profile(platform: Optional[PlatformSpec]) -> bool:
@@ -39,12 +40,10 @@ def validate_windows_profile_resource_limits(resource_limits: dict[str, str]) ->
 def build_windows_profile_env(
     env: dict[str, str],
     resource_limits: dict[str, str],
-    exposed_ports: Optional[list[str]] = None,
 ) -> list[dict[str, str]]:
     env_items = [f"{key}={value}" for key, value in env.items()]
     env_items = inject_windows_resource_limits_env(env_items, resource_limits or {})
-    if exposed_ports is not None:
-        env_items = inject_windows_user_ports(env_items, exposed_ports)
+    env_items = inject_windows_user_ports(env_items, WINDOWS_PROFILE_DEFAULT_USER_PORTS)
 
     result: list[dict[str, str]] = []
     for item in env_items:
@@ -130,6 +129,46 @@ def apply_windows_profile_overrides(
     )
 
 
+def apply_windows_profile_arch_selector(
+    pod_spec: Dict[str, Any],
+    template_spec: Dict[str, Any],
+    platform: Optional[PlatformSpec],
+) -> None:
+    """
+    Apply platform.arch constraint for windows profile pods.
+
+    We intentionally avoid forcing kubernetes.io/os=windows for this profile,
+    but still honor arch constraints from API requests and fail early on
+    template conflicts.
+    """
+    if platform is None:
+        return
+
+    requested_arch = platform.arch
+    template_selector = template_spec.get("nodeSelector", {})
+    if not isinstance(template_selector, dict):
+        template_selector = {}
+
+    existing_arch = template_selector.get("kubernetes.io/arch")
+    if existing_arch is not None and existing_arch != requested_arch:
+        raise ValueError(
+            "platform conflict with template nodeSelector: 'kubernetes.io/arch' "
+            f"is '{existing_arch}', request expects '{requested_arch}'."
+        )
+
+    if not _template_allows_arch(template_spec, requested_arch):
+        raise ValueError(
+            "platform conflict with template nodeAffinity: required node affinity "
+            f"does not allow requested architecture '{requested_arch}'."
+        )
+
+    node_selector = pod_spec.setdefault("nodeSelector", {})
+    if not isinstance(node_selector, dict):
+        node_selector = {}
+        pod_spec["nodeSelector"] = node_selector
+    node_selector["kubernetes.io/arch"] = requested_arch
+
+
 def _merge_volume_mounts(container: Dict[str, Any], mounts_to_add: List[Dict[str, str]]) -> None:
     mounts = container.setdefault("volumeMounts", [])
     if not isinstance(mounts, list):
@@ -156,3 +195,48 @@ def _merge_volumes(pod_spec: Dict[str, Any], volumes_to_add: List[Dict[str, Any]
             continue
         volumes.append(volume)
         existing_names.add(name)
+
+
+def _template_allows_arch(template_spec: Dict[str, Any], requested_arch: str) -> bool:
+    affinity = template_spec.get("affinity", {})
+    if not isinstance(affinity, dict):
+        return True
+
+    node_affinity = affinity.get("nodeAffinity", {})
+    if not isinstance(node_affinity, dict):
+        return True
+
+    required = node_affinity.get("requiredDuringSchedulingIgnoredDuringExecution", {})
+    if not isinstance(required, dict):
+        return True
+
+    terms = required.get("nodeSelectorTerms", [])
+    if not isinstance(terms, list) or not terms:
+        return True
+
+    return any(_arch_term_satisfiable(term, requested_arch) for term in terms if isinstance(term, dict))
+
+
+def _arch_term_satisfiable(term: Dict[str, Any], requested_arch: str) -> bool:
+    expressions = term.get("matchExpressions", [])
+    if not isinstance(expressions, list):
+        return True
+
+    for expr in expressions:
+        if not isinstance(expr, dict):
+            continue
+        if expr.get("key") != "kubernetes.io/arch":
+            continue
+        operator = expr.get("operator")
+        values = expr.get("values", [])
+        if not isinstance(values, list):
+            values = []
+
+        if operator == "In" and requested_arch not in values:
+            return False
+        if operator == "NotIn" and requested_arch in values:
+            return False
+        if operator == "DoesNotExist":
+            return False
+
+    return True

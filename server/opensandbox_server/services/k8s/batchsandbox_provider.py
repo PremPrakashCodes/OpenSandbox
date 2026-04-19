@@ -47,6 +47,7 @@ from opensandbox_server.services.k8s.provider_common import (
     _workload_platform_constraint_scope,
 )
 from opensandbox_server.services.k8s.windows_profile import (
+    apply_windows_profile_arch_selector,
     apply_windows_profile_overrides,
     is_windows_profile,
     validate_windows_profile_resource_limits,
@@ -187,6 +188,17 @@ class BatchSandboxProvider(WorkloadProvider):
                 env=env,
                 resource_limits=resource_limits,
                 disable_ipv6_for_egress=disable_ipv6_for_egress,
+            )
+            template = self.template_manager.get_base_template()
+            template_spec = (
+                template.get("spec", {})
+                .get("template", {})
+                .get("spec", {})
+            )
+            apply_windows_profile_arch_selector(
+                pod_spec=pod_spec,
+                template_spec=template_spec if isinstance(template_spec, dict) else {},
+                platform=platform,
             )
         else:
             self._apply_platform_node_selector(pod_spec, platform)
